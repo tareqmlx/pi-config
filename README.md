@@ -124,3 +124,9 @@ Runtime state pi writes into this directory — `sessions/`, `workflows/`, `auth
 Most of the larger extensions are built on Effect v4: a service layer behind a single `ManagedRuntime`, with `index.ts` acting as the async boundary where pi's tool handlers run effects. Tool descriptions and prompt snippets are kept in separate `prompt.ts` modules rather than inlined, so the model-facing text is reviewable on its own.
 
 Longer design docs live alongside the code: `extensions/subagents/docs/` (design plan, Effect v4 extension guide and notes) and `extensions/background-terminals/docs/implementation-guide.md`.
+
+## Credits
+
+This configuration is based on [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup) by [@davis7dotsh](https://github.com/davis7dotsh) — the extensions, skills, and themes here originate from that setup. Thanks for the work.
+
+Built for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) by [Earendil Works](https://github.com/earendil-works).

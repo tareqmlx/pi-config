@@ -1,3 +1,5 @@
+![pi agent — make it yours.](assets/pi-agent-banner.png)
+
 # pi-config
 
 Personal configuration for [pi](https://pi.dev/) — a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.

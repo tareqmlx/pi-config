@@ -2,20 +2,20 @@
 
 ![Pi Agent — make it yours.](assets/pi-agent-banner.png)
 
-Personal configuration for [Pi](https://pi.dev/) — a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.
+Personal configuration for [Pi](https://pi.dev/), a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.
 
-Everything here is loaded by Pi at startup from its own directory. There is no build step; Pi runs the TypeScript directly.
+Pi loads everything here at startup from its own directory. There is no build step; Pi runs the TypeScript directly.
 
 ## What's included
 
-**13 extensions** registering 16 model-facing tools and 9 slash commands, **2 skills**, and **3 themes**.
+13 extensions registering 16 model-facing tools and 9 slash commands, 2 skills, and 3 themes.
 
 ### Extensions
 
 | Extension | Tools | Commands | What it does |
 | --- | --- | --- | --- |
 | `subagents` | `subagent_spawn`, `subagent_wait`, `subagent_cancel`, `subagent_check`, `subagent_list` | `/subagents`, `/btw` | Spawns background subagents on three real backends (in-process Pi sessions, Claude Agent SDK, and `codex app-server` over JSON-RPC) behind one interface. Max 4 running. Unawaited results arrive as follow-up messages. `/subagents` opens a picker and full interactive takeover view; `/btw` asks a one-off side question while the main agent keeps working. |
-| `workflows` | `workflow` | `/workflows` | Model-authored multi-agent orchestration. The model writes a JavaScript script inline that runs ordered phases and fans work out to isolated subagents via `agent()` / `parallel()`. Runs blocking by default, or `background: true`. Artifacts are saved under `~/.pi/agent/workflows/<runId>/`. |
+| `workflows` | `workflow` | `/workflows` | Model-authored multi-agent orchestration. The model writes a JavaScript script inline that runs ordered phases and fans work out to isolated subagents via `agent()` / `parallel()`. Runs blocking by default, or `background: true`. It saves artifacts under `~/.pi/agent/workflows/<runId>/`. |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, `bg_kill` | `/ps` | Long-running shell processes the model can inspect and stop but never write to (stdin is ignored at the OS level). Max 8 concurrent; one exit notification per process. A widget above the editor shows the running count. |
 | `file-search` | `fd`, `rg` | — | First-class file-find and grep tools. Prefers a system-installed `fd`/`rg` (or `fdfind` on Debian/Ubuntu), then a binary already in `bin/`, and only downloads an official release into `bin/` when neither exists. |
 | `firecrawl-search` | `search`, `scrape`, `crawl` | — | Web search, page scrape, and site crawl via [Firecrawl](https://firecrawl.dev). Requires an API key. |
@@ -37,7 +37,7 @@ Everything here is loaded by Pi at startup from its own directory. There is no b
 | Skill | When it triggers |
 | --- | --- |
 | `subagents` | The user asks for subagents. Covers self-contained child prompts and what to do when a requested harness is unavailable. |
-| `background-terminals` | Dev servers, watchers, streaming builds — anything that should keep running while the agent works. |
+| `background-terminals` | Dev servers, watchers, streaming builds, anything that should keep running while the agent works. |
 
 ### Themes
 
@@ -88,8 +88,8 @@ Settings live in `~/.pi/agent/settings.json` (gitignored):
 
 Other configuration:
 
-- `.env` — `FIRECRAWL_API_KEY`. Copy from `.env.example`.
-- `extensions/summaries/config.private.json` — recap model, provider, and reasoning level. Written by `/summary-model`, gitignored. Defaults to `openai-codex` / `gpt-5.6-luna` / `medium`.
+- `.env`: `FIRECRAWL_API_KEY`. Copy from `.env.example`.
+- `extensions/summaries/config.private.json`: recap model, provider, and reasoning level. Written by `/summary-model`, gitignored. Defaults to `openai-codex` / `gpt-5.6-luna` / `medium`.
 
 ## Development
 
@@ -119,7 +119,7 @@ SETUP.md             Install and optional-dependency setup
 bin/                 fd/rg fallback binaries (gitignored, created on demand)
 ```
 
-Runtime state Pi writes into this directory — `sessions/`, `workflows/`, `auth.json`, `settings.json`, `trust.json`, `models.json` — is gitignored.
+Pi writes runtime state into this directory (`sessions/`, `workflows/`, `auth.json`, `settings.json`, `trust.json`, `models.json`), and all of it is gitignored.
 
 ## Architecture notes
 
@@ -129,6 +129,6 @@ Longer design docs live alongside the code: `extensions/subagents/docs/` (design
 
 ## Credits
 
-This configuration is based on [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup) by [@davis7dotsh](https://github.com/davis7dotsh) — the extensions, skills, and themes here originate from that setup. Thanks for the work.
+This configuration is based on [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup) by [@davis7dotsh](https://github.com/davis7dotsh). The extensions, skills, and themes here originate from that setup. Thanks for the work.
 
 Built for [Pi](https://pi.dev/) by [Earendil Works](https://github.com/earendil-works).

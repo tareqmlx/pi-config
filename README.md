@@ -1,6 +1,6 @@
 # pi-config
 
-Personal configuration for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) — a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.
+Personal configuration for [pi](https://pi.dev/) — a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.
 
 Everything here is loaded by pi at startup from its own directory. There is no build step; pi runs the TypeScript directly.
 
@@ -129,4 +129,4 @@ Longer design docs live alongside the code: `extensions/subagents/docs/` (design
 
 This configuration is based on [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup) by [@davis7dotsh](https://github.com/davis7dotsh) — the extensions, skills, and themes here originate from that setup. Thanks for the work.
 
-Built for [pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) by [Earendil Works](https://github.com/earendil-works).
+Built for [pi](https://pi.dev/) by [Earendil Works](https://github.com/earendil-works).

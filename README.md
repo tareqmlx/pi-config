@@ -1,10 +1,10 @@
-![pi agent — make it yours.](assets/pi-agent-banner.png)
-
 # pi-config
 
-Personal configuration for [pi](https://pi.dev/) — a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.
+![Pi Agent — make it yours.](assets/pi-agent-banner.png)
 
-Everything here is loaded by pi at startup from its own directory. There is no build step; pi runs the TypeScript directly.
+Personal configuration for [Pi](https://pi.dev/) — a terminal coding agent. This repository is the contents of `~/.pi/agent`: TypeScript extensions that add tools, slash commands, and UI to the agent, plus skills and themes.
+
+Everything here is loaded by Pi at startup from its own directory. There is no build step; Pi runs the TypeScript directly.
 
 ## What's included
 
@@ -14,7 +14,7 @@ Everything here is loaded by pi at startup from its own directory. There is no b
 
 | Extension | Tools | Commands | What it does |
 | --- | --- | --- | --- |
-| `subagents` | `subagent_spawn`, `subagent_wait`, `subagent_cancel`, `subagent_check`, `subagent_list` | `/subagents`, `/btw` | Spawns background subagents on three real backends (in-process pi sessions, Claude Agent SDK, and `codex app-server` over JSON-RPC) behind one interface. Max 4 running. Unawaited results arrive as follow-up messages. `/subagents` opens a picker and full interactive takeover view; `/btw` asks a one-off side question while the main agent keeps working. |
+| `subagents` | `subagent_spawn`, `subagent_wait`, `subagent_cancel`, `subagent_check`, `subagent_list` | `/subagents`, `/btw` | Spawns background subagents on three real backends (in-process Pi sessions, Claude Agent SDK, and `codex app-server` over JSON-RPC) behind one interface. Max 4 running. Unawaited results arrive as follow-up messages. `/subagents` opens a picker and full interactive takeover view; `/btw` asks a one-off side question while the main agent keeps working. |
 | `workflows` | `workflow` | `/workflows` | Model-authored multi-agent orchestration. The model writes a JavaScript script inline that runs ordered phases and fans work out to isolated subagents via `agent()` / `parallel()`. Runs blocking by default, or `background: true`. Artifacts are saved under `~/.pi/agent/workflows/<runId>/`. |
 | `background-terminals` | `bg_start`, `bg_status`, `bg_list`, `bg_kill` | `/ps` | Long-running shell processes the model can inspect and stop but never write to (stdin is ignored at the OS level). Max 8 concurrent; one exit notification per process. A widget above the editor shows the running count. |
 | `file-search` | `fd`, `rg` | — | First-class file-find and grep tools. Prefers a system-installed `fd`/`rg` (or `fdfind` on Debian/Ubuntu), then a binary already in `bin/`, and only downloads an official release into `bin/` when neither exists. |
@@ -45,7 +45,7 @@ Everything here is loaded by pi at startup from its own directory. There is no b
 
 ## Install
 
-Requires pi, Node.js 22.6 or newer (the test script uses `--experimental-strip-types`), and git.
+Requires Pi, Node.js 22.6 or newer (the test script uses `--experimental-strip-types`), and git.
 
 Clone this repository to `~/.pi/agent`, then install dependencies at the root **and** in each of the ten extension packages:
 
@@ -119,11 +119,11 @@ SETUP.md             Install and optional-dependency setup
 bin/                 fd/rg fallback binaries (gitignored, created on demand)
 ```
 
-Runtime state pi writes into this directory — `sessions/`, `workflows/`, `auth.json`, `settings.json`, `trust.json`, `models.json` — is gitignored.
+Runtime state Pi writes into this directory — `sessions/`, `workflows/`, `auth.json`, `settings.json`, `trust.json`, `models.json` — is gitignored.
 
 ## Architecture notes
 
-Most of the larger extensions are built on Effect v4: a service layer behind a single `ManagedRuntime`, with `index.ts` acting as the async boundary where pi's tool handlers run effects. Tool descriptions and prompt snippets are kept in separate `prompt.ts` modules rather than inlined, so the model-facing text is reviewable on its own.
+Most of the larger extensions are built on Effect v4: a service layer behind a single `ManagedRuntime`, with `index.ts` acting as the async boundary where Pi's tool handlers run effects. Tool descriptions and prompt snippets are kept in separate `prompt.ts` modules rather than inlined, so the model-facing text is reviewable on its own.
 
 Longer design docs live alongside the code: `extensions/subagents/docs/` (design plan, Effect v4 extension guide and notes) and `extensions/background-terminals/docs/implementation-guide.md`.
 
@@ -131,4 +131,4 @@ Longer design docs live alongside the code: `extensions/subagents/docs/` (design
 
 This configuration is based on [davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup) by [@davis7dotsh](https://github.com/davis7dotsh) — the extensions, skills, and themes here originate from that setup. Thanks for the work.
 
-Built for [pi](https://pi.dev/) by [Earendil Works](https://github.com/earendil-works).
+Built for [Pi](https://pi.dev/) by [Earendil Works](https://github.com/earendil-works).

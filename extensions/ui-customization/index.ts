@@ -36,16 +36,14 @@ interface DashboardTui extends RenderableNode {
 
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
-const STEADY_BEAM_CURSOR = "\x1b[6 q";
+const BLINKING_BEAM_CURSOR = "\x1b[5 q";
 const DEFAULT_CURSOR = "\x1b[0 q";
 
 class BeamCursorEditor extends CustomEditor {
   override render(width: number) {
     return super
       .render(width)
-      .map((line) =>
-        line.replace(`${CURSOR_MARKER}\x1b[7m`, CURSOR_MARKER),
-      );
+      .map((line) => line.replace(`${CURSOR_MARKER}\x1b[7m`, CURSOR_MARKER));
   }
 }
 const PALETTE: Rgb[] = [
@@ -234,7 +232,7 @@ export default function uiCustomization(pi: ExtensionAPI) {
   function install(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
 
-    process.stdout.write(STEADY_BEAM_CURSOR);
+    process.stdout.write(BLINKING_BEAM_CURSOR);
     ctx.ui.setEditorComponent(
       (tui, theme, keybindings) =>
         new BeamCursorEditor(tui, theme, keybindings),

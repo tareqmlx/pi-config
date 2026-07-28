@@ -1,7 +1,9 @@
 import { homedir } from "node:os";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import {
   CustomEditor,
+  getAgentDir,
+  sessionEntryToContextMessages,
   type ExtensionAPI,
   type ExtensionContext,
   type ReadonlyFooterDataProvider,
@@ -22,6 +24,10 @@ import {
   isGitInfoState,
   isModelInfoState,
 } from "../shared/dashboard-state.ts";
+import {
+  PromptHistory,
+  PromptHistoryReplayGuard,
+} from "./src/prompt-history.ts";
 
 type Rgb = [number, number, number];
 interface RenderableNode {
@@ -40,6 +46,32 @@ const BLINKING_BEAM_CURSOR = "\x1b[5 q";
 const DEFAULT_CURSOR = "\x1b[0 q";
 
 class BeamCursorEditor extends CustomEditor {
+  private promptHistory?: PromptHistory;
+  private readonly replayGuard = new PromptHistoryReplayGuard();
+
+  initializePromptHistory(
+    promptHistory: PromptHistory,
+    expectedReplay: string[],
+  ) {
+    this.promptHistory = promptHistory;
+    this.expectHistoryReplay(expectedReplay);
+    for (const prompt of promptHistory.values.reverse()) {
+      super.addToHistory(prompt);
+    }
+  }
+
+  expectHistoryReplay(prompts: string[]) {
+    this.replayGuard.expect(prompts);
+  }
+
+  override addToHistory(text: string) {
+    const prompt = text.trim();
+    if (!prompt || this.replayGuard.consume(prompt)) return;
+
+    super.addToHistory(prompt);
+    this.promptHistory?.record(prompt);
+  }
+
   override render(width: number) {
     return super
       .render(width)
@@ -164,6 +196,23 @@ function formatTokens(tokens: number) {
   return `${(tokens / 1_000_000).toFixed(1)}m`;
 }
 
+function getUserPrompts(ctx: ExtensionContext) {
+  return ctx.sessionManager
+    .buildContextEntries()
+    .flatMap(sessionEntryToContextMessages)
+    .flatMap((message) => {
+      if (message.role !== "user") return [];
+      if (typeof message.content === "string") return [message.content];
+      return [
+        message.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join(""),
+      ];
+    })
+    .filter((prompt) => prompt.trim());
+}
+
 function formatDirectory(cwd: string) {
   const home = homedir();
   if (cwd === home) return "~";
@@ -202,6 +251,7 @@ export default function uiCustomization(pi: ExtensionAPI) {
   let gitInfo = emptyGitInfoState();
   let requestRender: (() => void) | undefined;
   let activeTui: DashboardTui | undefined;
+  let activeEditor: BeamCursorEditor | undefined;
   let themeRemovalTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   const stopModelListener = pi.events.on(MODEL_INFO_CHANNEL, (value) => {
@@ -229,14 +279,32 @@ export default function uiCustomization(pi: ExtensionAPI) {
     }
   }
 
-  function install(ctx: ExtensionContext) {
+  function install(ctx: ExtensionContext, populateHistoryAfterBind: boolean) {
     if (ctx.mode !== "tui") return;
 
-    process.stdout.write(BLINKING_BEAM_CURSOR);
-    ctx.ui.setEditorComponent(
-      (tui, theme, keybindings) =>
-        new BeamCursorEditor(tui, theme, keybindings),
+    const promptHistory = new PromptHistory(
+      join(getAgentDir(), "input-history.jsonl"),
+      {
+        project: ctx.cwd,
+        sessionId: ctx.sessionManager.getSessionId(),
+      },
     );
+
+    // Seed history for users upgrading from a version without persistent input
+    // history. Later submissions are captured directly by BeamCursorEditor.
+    if (promptHistory.values.length === 0) {
+      for (const prompt of getUserPrompts(ctx)) promptHistory.record(prompt);
+    }
+
+    process.stdout.write(BLINKING_BEAM_CURSOR);
+    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+      activeEditor = new BeamCursorEditor(tui, theme, keybindings);
+      activeEditor.initializePromptHistory(
+        promptHistory,
+        populateHistoryAfterBind ? getUserPrompts(ctx) : [],
+      );
+      return activeEditor;
+    });
 
     ctx.ui.setHeader((tui) => {
       activeTui = tui;
@@ -320,11 +388,15 @@ export default function uiCustomization(pi: ExtensionAPI) {
     pi.events.emit(REFRESH_CHANNEL, undefined);
   }
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", (event, ctx) => {
     title = formatDirectory(ctx.cwd);
     modelInfo = emptyModelInfoState();
     gitInfo = emptyGitInfoState();
-    install(ctx);
+    install(ctx, event.reason === "startup");
+  });
+
+  pi.on("session_tree", (_event, ctx) => {
+    activeEditor?.expectHistoryReplay(getUserPrompts(ctx));
   });
 
   pi.on("resources_discover", () => {
@@ -337,6 +409,7 @@ export default function uiCustomization(pi: ExtensionAPI) {
     for (const timer of themeRemovalTimers) clearTimeout(timer);
     themeRemovalTimers = [];
     activeTui = undefined;
+    activeEditor = undefined;
     requestRender = undefined;
     if (ctx.mode === "tui") {
       ctx.ui.setEditorComponent(undefined);

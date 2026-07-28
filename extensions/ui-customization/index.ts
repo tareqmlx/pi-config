@@ -44,10 +44,62 @@ const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
 const BLINKING_BEAM_CURSOR = "\x1b[5 q";
 const DEFAULT_CURSOR = "\x1b[0 q";
+const PROMPT_INDICATOR = "❯";
+const PROMPT_INDICATOR_PADDING = 2;
+
+export function addPromptIndicator(
+  line: string,
+  width: number,
+  paddingX: number,
+  color: (text: string) => string,
+) {
+  const renderedPadding = Math.min(
+    paddingX,
+    Math.max(0, Math.floor((width - 1) / 2)),
+  );
+  if (renderedPadding === 0) return line;
+
+  const indicator = truncateToWidth(
+    `${color(PROMPT_INDICATOR)} `,
+    renderedPadding,
+    "",
+  );
+  const remainingPadding = Math.max(
+    0,
+    renderedPadding - visibleWidth(indicator),
+  );
+  return `${indicator}${" ".repeat(remainingPadding)}${line.slice(renderedPadding)}`;
+}
+
+export function addPromptIndicatorToEditor(
+  lines: string[],
+  width: number,
+  paddingX: number,
+  color: (text: string) => string,
+) {
+  const unscrolledTopBorder = color("─").repeat(width);
+  if (lines[0] !== unscrolledTopBorder) return lines;
+
+  return lines.map((line, index) =>
+    index === 1 ? addPromptIndicator(line, width, paddingX, color) : line,
+  );
+}
 
 class BeamCursorEditor extends CustomEditor {
   private promptHistory?: PromptHistory;
   private readonly replayGuard = new PromptHistoryReplayGuard();
+
+  constructor(...args: ConstructorParameters<typeof CustomEditor>) {
+    super(...args);
+    super.setPaddingX(PROMPT_INDICATOR_PADDING);
+  }
+
+  override setPaddingX(padding: number) {
+    const basePadding = Number.isFinite(padding)
+      ? Math.max(0, Math.floor(padding))
+      : 0;
+    super.setPaddingX(basePadding + PROMPT_INDICATOR_PADDING);
+  }
 
   initializePromptHistory(
     promptHistory: PromptHistory,
@@ -73,9 +125,15 @@ class BeamCursorEditor extends CustomEditor {
   }
 
   override render(width: number) {
-    return super
+    const lines = super
       .render(width)
       .map((line) => line.replace(`${CURSOR_MARKER}\x1b[7m`, CURSOR_MARKER));
+    return addPromptIndicatorToEditor(
+      lines,
+      width,
+      this.getPaddingX(),
+      this.borderColor,
+    );
   }
 }
 const PALETTE: Rgb[] = [

@@ -23,7 +23,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 | `git-info` | — | `/lg`, `/pr` | Polls git status and `gh` pull-request state in the background to feed the footer. `/lg` browses changed files and their diffs; `/pr` forces a refresh. |
 | `summaries` | — | `/summary-model` | Generates a recap of each agent run with a cheap secondary model and renders it as a custom transcript entry. `/summary-model` picks the provider, model, and reasoning level. |
 | `model-info` | — | — | Tracks live model, token, and session-cost state and publishes it on a shared channel for the footer. |
-| `ui-customization` | — | — | Custom editor and footer, rendering the git and model state that `git-info` and `model-info` publish. Prompt history persists across `/clear`, session switches, reloads, and restarts. |
+| `ui-customization` | — | — | Custom editor and footer, rendering the git and model state that `git-info` and `model-info` publish. Clipboard images appear as `[Image #N]` labels while Pi sends real image attachments and retains model-only local paths. Prompt history persists across `/clear`, session switches, reloads, and restarts. |
 | `startup-terminal-theme` | — | — | Queries the terminal background color at startup and picks a light or dark theme to match. |
 | `copy-all` | — | `/copy-all` | Copies every user and assistant message in the thread to the clipboard. |
 | `clear` | — | `/clear` | Clears the terminal and starts a new session. |

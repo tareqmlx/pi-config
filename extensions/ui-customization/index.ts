@@ -25,6 +25,13 @@ import {
   isModelInfoState,
 } from "../shared/dashboard-state.ts";
 import {
+  IMAGE_ATTACHMENT_ENTRY,
+  ImageAttachmentRegistry,
+  ensureImageLabels,
+  replaceImageLabels,
+  type ImageAttachment,
+} from "./src/image-attachments.ts";
+import {
   PromptHistory,
   PromptHistoryReplayGuard,
 } from "./src/prompt-history.ts";
@@ -88,6 +95,7 @@ export function addPromptIndicatorToEditor(
 class BeamCursorEditor extends CustomEditor {
   private promptHistory?: PromptHistory;
   private readonly replayGuard = new PromptHistoryReplayGuard();
+  private transformInsertedText?: (text: string) => string;
 
   constructor(...args: ConstructorParameters<typeof CustomEditor>) {
     super(...args);
@@ -114,6 +122,14 @@ class BeamCursorEditor extends CustomEditor {
 
   expectHistoryReplay(prompts: string[]) {
     this.replayGuard.expect(prompts);
+  }
+
+  setInsertedTextTransform(transform: (text: string) => string) {
+    this.transformInsertedText = transform;
+  }
+
+  override insertTextAtCursor(text: string) {
+    super.insertTextAtCursor(this.transformInsertedText?.(text) ?? text);
   }
 
   override addToHistory(text: string) {
@@ -304,12 +320,14 @@ function columns(left: string, right: string, width: number) {
 }
 
 export default function uiCustomization(pi: ExtensionAPI) {
+  const imageAttachments = new ImageAttachmentRegistry();
   let title = "pi";
   let modelInfo = emptyModelInfoState();
   let gitInfo = emptyGitInfoState();
   let requestRender: (() => void) | undefined;
   let activeTui: DashboardTui | undefined;
   let activeEditor: BeamCursorEditor | undefined;
+  let pendingTreeEditorText: string | undefined;
   let themeRemovalTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   const stopModelListener = pi.events.on(MODEL_INFO_CHANNEL, (value) => {
@@ -337,6 +355,23 @@ export default function uiCustomization(pi: ExtensionAPI) {
     }
   }
 
+  function persistImageAttachment(
+    ctx: ExtensionContext,
+    attachment: ImageAttachment,
+  ) {
+    try {
+      pi.appendEntry(
+        IMAGE_ATTACHMENT_ENTRY,
+        imageAttachments.registrationEntry(attachment),
+      );
+    } catch {
+      ctx.ui.notify(
+        `Could not persist metadata for ${attachment.label}`,
+        "warning",
+      );
+    }
+  }
+
   function install(ctx: ExtensionContext, populateHistoryAfterBind: boolean) {
     if (ctx.mode !== "tui") return;
 
@@ -357,6 +392,14 @@ export default function uiCustomization(pi: ExtensionAPI) {
     process.stdout.write(BLINKING_BEAM_CURSOR);
     ctx.ui.setEditorComponent((tui, theme, keybindings) => {
       activeEditor = new BeamCursorEditor(tui, theme, keybindings);
+      activeEditor.setInsertedTextTransform((text) => {
+        imageAttachments.reserveIdsFromText(activeEditor?.getText() ?? "");
+        const attachment = imageAttachments.registerClipboardPath(text);
+        if (!attachment) return text;
+
+        persistImageAttachment(ctx, attachment);
+        return attachment.label;
+      });
       activeEditor.initializePromptHistory(
         promptHistory,
         populateHistoryAfterBind ? getUserPrompts(ctx) : [],
@@ -446,7 +489,164 @@ export default function uiCustomization(pi: ExtensionAPI) {
     pi.events.emit(REFRESH_CHANNEL, undefined);
   }
 
+  pi.on("input", async (event, ctx) => {
+    if (
+      event.source !== "interactive" ||
+      !imageAttachments.hasPendingImages(event.text)
+    ) {
+      return { action: "continue" };
+    }
+
+    const prepared = await imageAttachments.preparePendingImages(event.text);
+    for (const failure of prepared.failures) {
+      ctx.ui.notify(
+        `${failure.attachment.label} is unavailable: ${failure.reason}`,
+        "warning",
+      );
+    }
+
+    return {
+      action: "transform",
+      text: imageAttachments.annotateFailures(event.text, prepared.failures),
+      images: [...(event.images ?? []), ...prepared.images],
+    };
+  });
+
+  pi.on("message_end", async (event, ctx) => {
+    if (event.message.role !== "user") return;
+    let text =
+      typeof event.message.content === "string"
+        ? event.message.content
+        : event.message.content
+            .filter((content) => content.type === "text")
+            .map((content) => content.text)
+            .join("");
+    const originalImages =
+      typeof event.message.content === "string"
+        ? []
+        : event.message.content.filter((content) => content.type === "image");
+    let transformed = false;
+    const reconciled = imageAttachments.reconcilePreparedImages(
+      text,
+      originalImages,
+    );
+    if (reconciled.text !== text) {
+      text = reconciled.text;
+      transformed = true;
+    }
+    for (const attachment of reconciled.registrations) {
+      persistImageAttachment(ctx, attachment);
+    }
+    const submittedIds = imageAttachments.markPreparedAsSubmitted(
+      text,
+      originalImages,
+    );
+
+    let fallbackImages: typeof originalImages = [];
+    if (imageAttachments.hasPendingImages(text)) {
+      const prepared = await imageAttachments.preparePendingImages(text);
+      for (const failure of prepared.failures) {
+        ctx.ui.notify(
+          `${failure.attachment.label} is unavailable: ${failure.reason}`,
+          "warning",
+        );
+      }
+      text = imageAttachments.annotateFailures(text, prepared.failures);
+      fallbackImages = prepared.images;
+      submittedIds.push(
+        ...imageAttachments.markPreparedAsSubmitted(text, fallbackImages),
+      );
+      transformed = fallbackImages.length > 0 || prepared.failures.length > 0;
+    }
+
+    const uniqueSubmittedIds = [...new Set(submittedIds)];
+    const labeledText = ensureImageLabels(text, uniqueSubmittedIds);
+    if (labeledText !== text) {
+      text = labeledText;
+      transformed = true;
+    }
+    if (uniqueSubmittedIds.length > 0) {
+      pi.appendEntry(
+        IMAGE_ATTACHMENT_ENTRY,
+        imageAttachments.submittedEntry(uniqueSubmittedIds),
+      );
+    }
+
+    if (!transformed) return;
+    return {
+      message: {
+        ...event.message,
+        content: [
+          { type: "text" as const, text },
+          ...originalImages,
+          ...fallbackImages,
+        ],
+      },
+    };
+  });
+
+  pi.on("context", (event) => {
+    let changed = false;
+    const messages = event.messages.map((message) => {
+      if (message.role !== "user") return message;
+      const text =
+        typeof message.content === "string"
+          ? message.content
+          : message.content
+              .filter((content) => content.type === "text")
+              .map((content) => content.text)
+              .join("");
+      const hints = imageAttachments.localPathHints(text);
+      if (hints.length === 0) return message;
+
+      changed = true;
+      const pathHint = {
+        type: "text" as const,
+        text: `\n<image-attachments>\n${hints.join("\n")}\n</image-attachments>`,
+      };
+      return {
+        ...message,
+        content:
+          typeof message.content === "string"
+            ? [{ type: "text" as const, text: message.content }, pathHint]
+            : [...message.content, pathHint],
+      };
+    });
+
+    return changed ? { messages } : undefined;
+  });
+
+  pi.on("session_before_tree", (event, ctx) => {
+    pendingTreeEditorText = undefined;
+    const preparedAttachments = imageAttachments.preparedAttachments();
+    if (
+      imageAttachments.isPreparingImages() ||
+      (preparedAttachments.length > 0 && ctx.hasPendingMessages())
+    ) {
+      ctx.ui.notify(
+        "Wait for images to load or dequeue them before navigating the session tree",
+        "warning",
+      );
+      return { cancel: true };
+    }
+    for (const attachment of preparedAttachments) {
+      imageAttachments.discardPreparedAttachment(attachment.id);
+    }
+
+    const target = ctx.sessionManager.getEntry(event.preparation.targetId);
+    if (target?.type !== "message" || target.message.role !== "user") return;
+    pendingTreeEditorText =
+      typeof target.message.content === "string"
+        ? target.message.content
+        : target.message.content
+            .filter((content) => content.type === "text")
+            .map((content) => content.text)
+            .join("");
+  });
+
   pi.on("session_start", (event, ctx) => {
+    pendingTreeEditorText = undefined;
+    imageAttachments.reset(ctx.sessionManager.getBranch());
     title = formatDirectory(ctx.cwd);
     modelInfo = emptyModelInfoState();
     gitInfo = emptyGitInfoState();
@@ -454,6 +654,45 @@ export default function uiCustomization(pi: ExtensionAPI) {
   });
 
   pi.on("session_tree", (_event, ctx) => {
+    const currentEditorText = activeEditor?.getText() ?? "";
+    const recalledEditorText =
+      !currentEditorText.trim() && pendingTreeEditorText !== undefined;
+    const editorText = currentEditorText.trim()
+      ? currentEditorText
+      : (pendingTreeEditorText ?? currentEditorText);
+    pendingTreeEditorText = undefined;
+    const previousDraftAttachments = currentEditorText.trim()
+      ? imageAttachments.editorAttachments(currentEditorText)
+      : [];
+    imageAttachments.reset(ctx.sessionManager.getBranch(), true);
+    const draftAttachments = currentEditorText.trim()
+      ? previousDraftAttachments
+      : imageAttachments.editorAttachments(editorText);
+
+    const replacements = new Map<number, number>();
+    for (const previous of draftAttachments) {
+      const carried = imageAttachments.carryPendingAttachment(previous);
+      if (!carried) continue;
+      if (carried.shouldPersist) {
+        persistImageAttachment(ctx, carried.attachment);
+      }
+      if (carried.attachment.id !== previous.id) {
+        replacements.set(previous.id, carried.attachment.id);
+      }
+    }
+
+    const reconciledText = replaceImageLabels(editorText, replacements);
+    if (activeEditor && reconciledText !== currentEditorText) {
+      activeEditor.setText(reconciledText);
+      if (replacements.size > 0) {
+        ctx.ui.notify(
+          recalledEditorText
+            ? "Recalled images were renumbered for this session branch"
+            : "Renumbered pasted images to match the selected session branch",
+          "info",
+        );
+      }
+    }
     activeEditor?.expectHistoryReplay(getUserPrompts(ctx));
   });
 

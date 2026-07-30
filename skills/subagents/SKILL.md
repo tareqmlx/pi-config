@@ -79,4 +79,4 @@ Call `subagent_spawn` with a complete `prompt`, short `name`, chosen `harness`, 
 - `subagent_cancel({ ids })`: stop runs while preserving partial transcripts.
 - `/subagents`: inspect or take over a run interactively.
 
-Results return automatically. After spawning, continue useful parent work instead of immediately waiting.
+Results return automatically. After spawning, continue useful parent work instead of immediately waiting. When the final queued run settles, Pi closes the child session/process automatically; its terminal snapshot remains available for result collection and read-only inspection.

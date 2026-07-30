@@ -11,7 +11,8 @@
  * - subagent_list: list all subagents.
  *
  * Unawaited subagents queue their result as a follow-up message when they
- * settle. `/subagents` opens a picker + full interactive takeover view.
+ * settle. Their backend session/process is then closed automatically while a
+ * bounded terminal snapshot remains available in `/subagents` for review.
  *
  * Architecture: Effect v4 generators throughout (backends -> manager ->
  * runtime); this file is the async boundary where tool handlers run effects
@@ -168,17 +169,19 @@ export default function (pi: ExtensionAPI) {
 
   const updateStatus = (manager: SubagentManagerShape) => {
     if (!ui) return;
-    const subs = manager.view.list();
-    if (subs.length === 0) {
+    const running = manager.view
+      .list()
+      .filter((snap) => snap.status === "running").length;
+    // The footer is an activity indicator, not settled history. Finished
+    // snapshots remain inspectable through /subagents after their backend
+    // sessions have been closed, but should not occupy a permanent row.
+    if (running === 0) {
       ui.setStatus("subagents", undefined);
       return;
     }
-    const running = subs.filter((snap) => snap.status === "running").length;
-    const failed = subs.filter((snap) => snap.status === "error").length;
-    const done = subs.length - running - failed;
     ui.setStatus(
       "subagents",
-      formatActivityStatus(ui.theme, { running, done, failed }),
+      formatActivityStatus(ui.theme, { running, done: 0, failed: 0 }),
     );
   };
 
@@ -239,8 +242,8 @@ export default function (pi: ExtensionAPI) {
     }
     // Keep the result retractable while the parent is working. A later
     // subagent_wait can consume it before agent_settled flushes follow-ups.
-    // Defer a copy: the live snapshot keeps mutating if the subagent is
-    // restarted before the deferred result flushes.
+    // Defer a copy so result delivery is independent of backend cleanup and
+    // later bounded-history pruning.
     resultDelivery.defer({ ...snap, meta: { ...snap.meta } });
     if (sessionContext?.isIdle()) flushResults();
   };

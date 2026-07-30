@@ -591,23 +591,25 @@ const makeClaudeSession = (
 
     void pump();
 
-    const submit = (text: string) => {
+    const submit = (text: string, queueWhileDraining = false) => {
       const wasActive = state.activeRun;
+      const queueForNextRun = wasActive || queueWhileDraining;
       const message = input.push(text);
       if (!message) return false;
-      if (!wasActive) {
+      if (!queueForNextRun) {
         state.activeRun = true;
         state.runVersion++;
         state.currentText = "";
         state.liveText = "";
       }
       state.submittedUuids.add(message.uuid ?? "");
-      // Idle restarts flip status synchronously (like pi's startRun); a steer
-      // into an active run must NOT re-emit RunStarted — its own turn begins
-      // later via beginQueuedRunIfNeeded.
-      if (!wasActive) emit({ _tag: "RunStarted" });
+      // Initial submission starts the first run synchronously. Steers into an
+      // active run—or into the short gap while an accepted steer is starting
+      // its next run—remain queued until beginQueuedRunIfNeeded observes SDK
+      // activity.
+      if (!queueForNextRun) emit({ _tag: "RunStarted" });
       emit({ _tag: "UserMessage", text });
-      if (wasActive) {
+      if (queueForNextRun) {
         state.queued.push({
           text,
           kind: "steer",
@@ -642,12 +644,35 @@ const makeClaudeSession = (
           if (state.closed) {
             return new SendError({ message: "Subagent session is closed." });
           }
-          return submit(text)
+          const queueWhileDraining =
+            !state.activeRun && state.queued.length > 0;
+          if (!state.activeRun && !queueWhileDraining) {
+            return new SendError({
+              message: "Subagent run has already finished.",
+            });
+          }
+          return submit(text, queueWhileDraining)
             ? Effect.void
             : new SendError({ message: "Subagent session is closed." });
         }),
       interrupt: Effect.promise(async () => {
-        if (state.closed || !state.activeRun) return;
+        if (state.closed) return;
+        if (!state.activeRun) {
+          if (state.queued.length === 0) return;
+          // The prior result can arrive before the SDK starts an accepted
+          // queued prompt. Closing is the only reliable way to retract a
+          // message the streaming iterator may already have consumed.
+          input.clear();
+          state.queued = [];
+          emit({ _tag: "QueueChanged", queued: [] });
+          emit({ _tag: "RunSettled", outcome: { _tag: "Interrupted" } });
+          state.closed = true;
+          input.end();
+          abortController.abort();
+          nativeQuery.close();
+          Queue.endUnsafe(events);
+          return;
+        }
         const version = state.runVersion;
         state.interruptRequested = true;
         input.clear();

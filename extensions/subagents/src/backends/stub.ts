@@ -35,6 +35,10 @@ export interface StubProfile {
   readonly toolName: string;
   /** Delay between scripted events; varies per backend so streams differ. */
   readonly cadenceMs: number;
+  /** Optional test delay exposing the accepted-continuation inter-turn gap. */
+  readonly betweenTurnsMs?: number;
+  /** Test hook for verifying scoped backend cleanup. */
+  readonly onClose?: () => void;
 }
 
 const STUB_DIR = path.join(os.tmpdir(), "subagents-stub");
@@ -89,6 +93,7 @@ const makeStubSession = (
       pending: [] as string[],
       turnCount: 0,
       closed: false,
+      activeRun: false,
       /** True between the driver dequeuing a prompt and registering its turn fiber. */
       dispatching: false,
     };
@@ -116,6 +121,7 @@ const makeStubSession = (
 
     const runTurn = (userText: string, turn: number) =>
       Effect.gen(function* () {
+        state.activeRun = true;
         yield* emit({ _tag: "RunStarted" });
         const failing = userText.trimStart().startsWith("FAIL:");
 
@@ -166,6 +172,7 @@ const makeStubSession = (
 
         if (failing) {
           yield* pause;
+          state.activeRun = false;
           yield* emit({
             _tag: "RunSettled",
             outcome: {
@@ -193,6 +200,7 @@ const makeStubSession = (
           tokens: Math.min(profile.contextWindow, 2400 * (turn + 1) + 900),
           contextWindow: profile.contextWindow,
         });
+        state.activeRun = false;
         yield* emit({
           _tag: "RunSettled",
           outcome: { _tag: "Completed", finalText },
@@ -215,10 +223,17 @@ const makeStubSession = (
         const fiber = yield* Effect.forkChild(
           runTurn(text, turn).pipe(
             Effect.onInterrupt(() =>
-              emit({
-                _tag: "RunSettled",
-                outcome: { _tag: "Interrupted" },
-              }).pipe(Effect.ignore),
+              Effect.sync(() => {
+                state.activeRun = false;
+              }).pipe(
+                Effect.andThen(
+                  emit({
+                    _tag: "RunSettled",
+                    outcome: { _tag: "Interrupted" },
+                  }),
+                ),
+                Effect.ignore,
+              ),
             ),
           ),
         );
@@ -226,6 +241,9 @@ const makeStubSession = (
         state.dispatching = false;
         yield* Fiber.await(fiber);
         yield* Ref.set(activeTurn, undefined);
+        if (state.pending.length > 0 && (profile.betweenTurnsMs ?? 0) > 0) {
+          yield* Effect.sleep(Duration.millis(profile.betweenTurnsMs ?? 0));
+        }
       }
     });
     yield* Effect.forkScoped(driver.pipe(Effect.ignore));
@@ -235,6 +253,7 @@ const makeStubSession = (
         state.closed = true;
         yield* Queue.end(inbox).pipe(Effect.ignore);
         yield* Queue.end(events).pipe(Effect.ignore);
+        yield* Effect.sync(() => profile.onClose?.());
       }),
     );
 
@@ -265,7 +284,14 @@ const makeStubSession = (
     return {
       meta: Effect.sync(() => state.meta),
       events: Stream.fromQueue(events),
-      send: submit,
+      send: (text) =>
+        Effect.suspend(() =>
+          state.activeRun || state.dispatching || state.pending.length > 0
+            ? submit(text)
+            : new SendError({
+                message: "Subagent run has already finished.",
+              }),
+        ),
       interrupt: Effect.gen(function* () {
         // Drop queued prompts so interrupting cannot immediately start
         // another turn, then stop the active turn. A prompt may be mid-flight

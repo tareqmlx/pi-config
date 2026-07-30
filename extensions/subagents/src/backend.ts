@@ -20,7 +20,7 @@ import type {
 } from "./domain.ts";
 
 export interface BackendCapabilities {
-  /** Can send() steer a live run (vs. only starting a fresh run when idle). */
+  /** Can send() steer or queue work while a run is active. */
   readonly steering: boolean;
   readonly modelSelection: boolean;
   readonly reasoningEffort: boolean;
@@ -39,14 +39,16 @@ export interface SubagentSession {
    */
   readonly events: Stream.Stream<SubagentEvent>;
   /**
-   * Steer the active run, or start a fresh run when idle (v1 `manager.send`
-   * semantics — the "is a run active" decision is backend-native state).
+   * Steer or queue work while a run is active or accepted continuations are
+   * draining. Once the backend is idle with no queued work, it must reject
+   * sends so manager-side auto-close cannot race an implicit restart.
    */
   send(text: string): Effect.Effect<void, SendError>;
   /**
-   * Interrupt the active run. Resolves once the backend acknowledges; the
-   * corresponding RunSettled(Interrupted) arrives on `events`. Callers bound
-   * this with a timeout and fall back to closing the session scope.
+   * Interrupt active or draining work. Resolves after the backend has stopped
+   * accepting new work and normally emitted RunSettled(Interrupted); an idle
+   * backend may have nothing to emit. Callers bound this with a timeout, allow
+   * a short event-folding grace period, then force settlement and scope close.
    */
   readonly interrupt: Effect.Effect<void>;
 }

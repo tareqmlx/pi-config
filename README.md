@@ -8,7 +8,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ## What's included
 
-13 extensions registering 16 model-facing tools and 9 slash commands, 2 skills, and 3 themes.
+14 extensions registering 16 model-facing tools and 10 slash commands, 2 skills, and 3 themes.
 
 ### Extensions
 
@@ -20,6 +20,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 | `file-search` | `fd`, `rg` | — | First-class file-find and grep tools. Prefers a system-installed `fd`/`rg` (or `fdfind` on Debian/Ubuntu), then a binary already in `bin/`, and only downloads an official release into `bin/` when neither exists. |
 | `firecrawl-search` | `search`, `scrape`, `crawl` | — | Web search, page scrape, and site crawl via [Firecrawl](https://firecrawl.dev). Requires an API key. |
 | `ask-user` | `ask_user` | — | Lets the model ask a single multiple-choice question (2–5 options plus "Write my own answer") in a popup. Esc declines and tells the model so. |
+| `add-dir` | — | `/add-dir` | Adds another working directory to the current session without changing its primary working directory. Validates and canonicalizes the path, completes directory names, and teaches the agent to use absolute paths there. The directory survives reloads and forks in the current process, but not new or resumed sessions. |
 | `git-info` | — | `/lg`, `/pr` | Polls git status and `gh` pull-request state in the background to feed the footer. `/lg` browses changed files and their diffs; `/pr` forces a refresh. |
 | `summaries` | — | `/summary-model` | Generates a recap of each agent run with a cheap secondary model and renders it as a custom transcript entry. `/summary-model` picks the provider, model, and reasoning level. |
 | `model-info` | — | — | Tracks live model, token, and session-cost state and publishes it on a shared channel for the footer. |

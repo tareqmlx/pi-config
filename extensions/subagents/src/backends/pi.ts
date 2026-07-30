@@ -6,7 +6,7 @@
  * - real session files visible in /resume, child resources loaded per-cwd
  *   with trust gating, and the child tool denylist;
  * - `session.subscribe()` events translated to normalized SubagentEvents;
- * - send() steers a streaming run or starts a fresh prompt() when idle;
+ * - send() steers only while a run is active; settled sessions are closed;
  * - interrupt clears the queue and aborts; closing the session scope emits
  *   the child session_shutdown hook and disposes the session.
  */
@@ -530,16 +530,18 @@ const makePiSession = (
           if (state.closed) {
             return new SendError({ message: "Subagent session is closed." });
           }
-          if (session.isStreaming) {
-            // Steer the active run via the SDK's queue; queue_update events
-            // render it, message_end(user) lands it in the transcript. A
-            // rejected steer is a real send failure, not a diagnostic.
-            return Effect.tryPromise({
-              try: () => session.steer(text),
-              catch: (error) => new SendError({ message: boundedError(error) }),
-            }).pipe(Effect.asVoid);
+          if (!session.isStreaming) {
+            return new SendError({
+              message: "Subagent run has already finished.",
+            });
           }
-          return Effect.sync(() => startRun(text));
+          // Steer the active run via the SDK's queue; queue_update events
+          // render it, message_end(user) lands it in the transcript. A
+          // rejected steer is a real send failure, not a diagnostic.
+          return Effect.tryPromise({
+            try: () => session.steer(text),
+            catch: (error) => new SendError({ message: boundedError(error) }),
+          }).pipe(Effect.asVoid);
         }),
       interrupt: Effect.promise(async () => {
         if (state.closed) return;

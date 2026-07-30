@@ -1,10 +1,11 @@
 /**
- * SubagentManager — owns the registry of running/finished subagents.
+ * SubagentManager — owns live subagents and their bounded settled history.
  *
- * Each subagent is a scoped `SubagentSession` from a `SubagentBackend` plus a
- * pump fiber that folds its normalized event stream into a mutable
- * `SubagentSnapshot`. Closing a subagent's scope kills the underlying
- * session/process and stops the pump.
+ * Each subagent starts as a scoped `SubagentSession` from a `SubagentBackend`
+ * plus a pump fiber that folds its normalized event stream into a mutable
+ * `SubagentSnapshot`. Once its final queued run settles, the manager closes
+ * that scope automatically, killing the underlying session/process while
+ * retaining the immutable terminal snapshot for result collection and review.
  *
  * The manager also exposes a synchronous `SubagentReadModel` so the
  * imperative TUI components (which render synchronously) can read snapshots
@@ -45,6 +46,7 @@ import {
 export const MAX_RUNNING = 4;
 export const MAX_TRACKED = 64;
 const STOP_TIMEOUT_MS = 5_000;
+const SETTLE_GRACE_MS = 250;
 const ERROR_TEXT_MAX_LENGTH = 4_096;
 const TRANSCRIPT_TEXT_MAX_LENGTH = 64 * 1_024;
 const LIVE_ASSISTANT_MAX_LENGTH = 128 * 1_024;
@@ -99,9 +101,10 @@ interface Entry {
   scope: Scope.Closeable;
   pump?: Fiber.Fiber<void>;
   liveToolMap: Map<string, LiveToolState>;
-  /** Idle restart dispatched but RunStarted not folded yet; counts as running
-   * so concurrent restarts cannot race past the cap. */
-  restarting?: boolean;
+  /** Final settlement is sticky even if a backend emits late buffered events. */
+  terminal?: boolean;
+  /** Set before detached scope cleanup begins, making cleanup idempotent. */
+  scopeClosing?: boolean;
 }
 
 // --- Read model ----------------------------------------------------------------
@@ -115,7 +118,7 @@ export interface SubagentReadModel {
   subscribe(listener: () => void): () => void;
   /** Per-subagent notification (takeover view). */
   subscribeTo(id: string, listener: () => void): () => void;
-  /** Fire-and-forget: steer/continue a subagent (takeover input). */
+  /** Fire-and-forget: steer/queue work while a subagent is still running. */
   requestSend(id: string, text: string): void;
   /** Fire-and-forget: abort a running subagent (dashboard `x`, takeover). */
   requestAbort(id: string): void;
@@ -160,6 +163,7 @@ export interface SubagentManagerShape {
   cancel(
     ids: ReadonlyArray<string>,
   ): Effect.Effect<ReadonlyArray<CancelResult>>;
+  /** Steer/queue work only while the subagent is active. Settled sessions close automatically. */
   send(id: string, text: string): Effect.Effect<void, SendError>;
   get(id: string): Effect.Effect<SubagentSnapshot | undefined>;
   readonly list: Effect.Effect<ReadonlyArray<SubagentSnapshot>>;
@@ -228,9 +232,7 @@ const makeManager = Effect.gen(function* () {
   });
 
   const runningCount = () =>
-    [...entries.values()].filter(
-      (e) => e.snapshot.status === "running" || e.restarting === true,
-    ).length;
+    [...entries.values()].filter((e) => e.snapshot.status === "running").length;
 
   const addInterest = (ids: ReadonlyArray<string>) => {
     for (const id of ids) waitInterest.set(id, (waitInterest.get(id) ?? 0) + 1);
@@ -244,7 +246,18 @@ const makeManager = Effect.gen(function* () {
   };
 
   const closeEntryScope = (entry: Entry) =>
-    Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+    Effect.suspend(() => {
+      if (entry.scopeClosing) return Effect.void;
+      entry.scopeClosing = true;
+      return Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+    });
+
+  const scheduleEntryCleanup = (entry: Entry) => {
+    if (entry.scopeClosing) return;
+    const fiber = runDetached(closeEntryScope(entry));
+    cleanups.add(fiber);
+    fiber.addObserver(() => cleanups.delete(fiber));
+  };
 
   const pruneSettled = () => {
     if (entries.size <= MAX_TRACKED) return;
@@ -261,25 +274,36 @@ const makeManager = Effect.gen(function* () {
     for (const entry of candidates) {
       if (entries.size <= MAX_TRACKED) break;
       entries.delete(entry.snapshot.id);
-      const fiber = runDetached(closeEntryScope(entry));
-      cleanups.add(fiber);
-      fiber.addObserver(() => cleanups.delete(fiber));
+      scheduleEntryCleanup(entry);
+      notify(entry.snapshot.id);
     }
   };
 
-  const settle = (entry: Entry, outcome: RunOutcome) => {
+  const settle = (
+    entry: Entry,
+    outcome: RunOutcome,
+    options: { force?: boolean } = {},
+  ) => {
     const s = entry.snapshot;
-    entry.restarting = false;
-    if (s.status !== "running") return;
-    s.settledAt = Date.now();
+    if (s.status !== "running" || entry.terminal) return;
+    // A steer/follow-up queued during this run belongs to the same logical
+    // task. Keep the entry active until the backend has drained every queued
+    // run; otherwise cleanup would kill accepted work between turns. An
+    // interrupt or dead event stream is always terminal: those paths cannot
+    // safely continue queued work.
+    const willContinue =
+      options.force !== true &&
+      outcome._tag !== "Interrupted" &&
+      s.queued.length > 0;
+    if (!willContinue) s.settledAt = Date.now();
     switch (outcome._tag) {
       case "Completed":
-        s.status = "done";
+        if (!willContinue) s.status = "done";
         s.errorText = undefined;
         s.finalText = outcome.finalText.slice(0, FINAL_TEXT_MAX_LENGTH);
         break;
       case "Failed":
-        s.status = "error";
+        if (!willContinue) s.status = "error";
         s.errorText = bounded(outcome.errorText);
         // Never let a failed run report the previous run's successful output.
         s.finalText = (outcome.partialText ?? "").slice(
@@ -288,34 +312,47 @@ const makeManager = Effect.gen(function* () {
         );
         break;
       case "Interrupted":
-        s.status = "error";
+        if (!willContinue) s.status = "error";
         s.errorText = "Run was aborted";
-        s.finalText = (outcome.partialText ?? "").slice(
-          0,
-          FINAL_TEXT_MAX_LENGTH,
-        );
+        // In a queued-drain gap the previous turn's completed output is the
+        // best partial result. Preserve it unless the backend supplies newer
+        // partial text for the interrupted turn.
+        if (outcome.partialText !== undefined) {
+          s.finalText = outcome.partialText.slice(0, FINAL_TEXT_MAX_LENGTH);
+        }
         break;
     }
     s.liveAssistant = undefined;
     entry.liveToolMap.clear();
     s.liveTools = [];
     s.queued = [];
-    const consumed = (waitInterest.get(s.id) ?? 0) > 0;
+    // Capture wait interest before notify wakes waiters; they can release
+    // their interest synchronously as soon as they observe terminal status.
+    const consumed = !willContinue && (waitInterest.get(s.id) ?? 0) > 0;
+    if (!willContinue) entry.terminal = true;
     notify(s.id);
+    if (willContinue) return;
+
     try {
       // During teardown, don't queue results into a shutting-down session.
       if (!disposed) onSettled?.(s, consumed);
     } catch {
       // The parent session may be unavailable; settlement stays final.
     }
+    // Result delivery reads the retained snapshot, not the live backend. Close
+    // the expensive session/process now; history remains available until the
+    // bounded registry prunes it.
+    scheduleEntryCleanup(entry);
     pruneSettled();
   };
 
   const foldEvent = (entry: Entry, event: SubagentEvent) => {
+    // Scope cleanup can leave already-buffered events in the normalized
+    // stream. A final result must never be resurrected or delivered twice.
+    if (entry.terminal) return;
     const s = entry.snapshot;
     switch (event._tag) {
       case "RunStarted":
-        entry.restarting = false;
         s.status = "running";
         s.settledAt = undefined;
         s.errorText = undefined;
@@ -502,10 +539,14 @@ const makeManager = Effect.gen(function* () {
           Effect.ensuring(
             Effect.sync(() => {
               if (entry.snapshot.status === "running") {
-                settle(entry, {
-                  _tag: "Failed",
-                  errorText: "Backend event stream ended unexpectedly",
-                });
+                settle(
+                  entry,
+                  {
+                    _tag: "Failed",
+                    errorText: "Backend event stream ended unexpectedly",
+                  },
+                  { force: true },
+                );
               }
             }),
           ),
@@ -561,23 +602,40 @@ const makeManager = Effect.gen(function* () {
         Effect.timeout(STOP_TIMEOUT_MS),
         Effect.result,
       );
-      if (Result.isFailure(graceful)) {
-        // Settle before closing the scope so the pump's stream-ended
-        // fallback ("Backend event stream ended unexpectedly") cannot win
-        // the race and report the wrong terminal reason.
-        yield* Effect.sync(() => {
-          settle(entry, { _tag: "Interrupted" });
-          entry.snapshot.errorText =
-            "Abort deadline exceeded; session was force-disposed";
-          notify(entry.snapshot.id);
+      if (Result.isSuccess(graceful)) {
+        // Queue delivery and the pump run on separate fibers. Give a real
+        // backend RunSettled a short chance to preserve its outcome and
+        // partial output before synthesizing the drain-gap fallback.
+        const awaitSettled = Effect.gen(function* () {
+          while (entry.snapshot.status === "running") yield* nextChange;
         });
-        // Bound the close like disposeAll does: a stuck backend finalizer
-        // must not hang cancel after the run is already settled.
-        yield* closeEntryScope(entry).pipe(
-          Effect.timeout(STOP_TIMEOUT_MS),
+        yield* awaitSettled.pipe(
+          Effect.timeout(SETTLE_GRACE_MS),
           Effect.ignore,
         );
+        yield* Effect.sync(() => {
+          if (entry.snapshot.status === "running") {
+            settle(entry, { _tag: "Interrupted" }, { force: true });
+          }
+        });
+        return;
       }
+
+      // Settle before closing the scope so the pump's stream-ended fallback
+      // ("Backend event stream ended unexpectedly") cannot win the race and
+      // report the wrong terminal reason.
+      yield* Effect.sync(() => {
+        settle(entry, { _tag: "Interrupted" });
+        entry.snapshot.errorText =
+          "Abort deadline exceeded; session was force-disposed";
+        notify(entry.snapshot.id);
+      });
+      // Bound the close like disposeAll does: a stuck backend finalizer must
+      // not hang cancel after the run is already settled.
+      yield* closeEntryScope(entry).pipe(
+        Effect.timeout(STOP_TIMEOUT_MS),
+        Effect.ignore,
+      );
     });
 
   const cancel = (ids: ReadonlyArray<string>) =>
@@ -629,27 +687,14 @@ const makeManager = Effect.gen(function* () {
           message: `Subagent "${id}" is no longer tracked.`,
         });
       }
-      // Restarting a settled subagent occupies a running slot again, so it
-      // must respect the same cap as spawn. Steering an already-running one
-      // does not consume additional capacity.
-      if (entry.snapshot.status !== "running") {
-        if (runningCount() + reserved >= MAX_RUNNING) {
-          return new SendError({
-            message: `Max ${MAX_RUNNING} subagents can run concurrently; restarting "${id}" would exceed that.`,
-          });
-        }
-        // Occupy the slot synchronously: the RunStarted that flips status
-        // arrives via the async pump, and two concurrent restarts must not
-        // both pass the check in that window. Cleared by RunStarted/settle,
-        // or here when the backend rejects the send.
-        entry.restarting = true;
-        return entry.session.send(text).pipe(
-          Effect.onError(() =>
-            Effect.sync(() => {
-              entry.restarting = false;
-            }),
-          ),
-        );
+      if (
+        entry.snapshot.status !== "running" ||
+        entry.terminal ||
+        entry.scopeClosing
+      ) {
+        return new SendError({
+          message: `Subagent "${id}" has finished and is closed. Spawn a new subagent for more work.`,
+        });
       }
       return entry.session.send(text);
     });

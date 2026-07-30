@@ -8,11 +8,16 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Effect, Layer, ManagedRuntime } from "effect";
+import { Cause, Effect, Layer, ManagedRuntime, Queue, Stream } from "effect";
 import { BackendRegistry, type SubagentBackend } from "./src/backend.ts";
 import { piBackend } from "./src/backends/pi.ts";
 import { makeStubBackend } from "./src/backends/stub.ts";
-import type { BackendName, ParentContext, SpawnTask } from "./src/domain.ts";
+import type {
+  BackendName,
+  ParentContext,
+  SpawnTask,
+  SubagentEvent,
+} from "./src/domain.ts";
 import {
   SubagentManager,
   SubagentManagerLive,
@@ -29,6 +34,7 @@ const TestRegistryLive = Layer.sync(BackendRegistry, () => {
       contextWindow: 200_000,
       toolName: "Bash",
       cadenceMs: 40,
+      betweenTurnsMs: 100,
     }),
     makeStubBackend({
       backend: "codex",
@@ -47,6 +53,99 @@ const createTestRuntime = () =>
   ManagedRuntime.make(
     SubagentManagerLive.pipe(Layer.provide(TestRegistryLive)),
   );
+
+function createScriptedRuntime(
+  events: ReadonlyArray<SubagentEvent>,
+  onClose: () => void,
+) {
+  const registry = Layer.sync(BackendRegistry, () => {
+    const backend: SubagentBackend = {
+      name: "codex",
+      capabilities: {
+        steering: true,
+        modelSelection: true,
+        reasoningEffort: true,
+      },
+      available: Effect.succeed(true),
+      spawn: () =>
+        Effect.gen(function* () {
+          yield* Effect.addFinalizer(() => Effect.sync(onClose));
+          return {
+            meta: Effect.succeed({
+              backend: "codex" as const,
+              modelLabel: "codex/scripted",
+            }),
+            events: Stream.fromIterable(events),
+            send: () => Effect.void,
+            interrupt: Effect.void,
+          };
+        }),
+    };
+    return new Map<BackendName, SubagentBackend>([[backend.name, backend]]);
+  });
+  return ManagedRuntime.make(SubagentManagerLive.pipe(Layer.provide(registry)));
+}
+
+function createNoopInterruptRuntime(
+  onClose: () => void,
+  interruptPartialText?: string,
+) {
+  const registry = Layer.sync(BackendRegistry, () => {
+    const backend: SubagentBackend = {
+      name: "codex",
+      capabilities: {
+        steering: true,
+        modelSelection: true,
+        reasoningEffort: true,
+      },
+      available: Effect.succeed(true),
+      spawn: () =>
+        Effect.gen(function* () {
+          const events = yield* Queue.make<SubagentEvent, Cause.Done>();
+          Queue.offerUnsafe(events, { _tag: "RunStarted" });
+          Queue.offerUnsafe(events, {
+            _tag: "QueueChanged",
+            queued: [{ text: "accepted follow-up", kind: "follow-up" }],
+          });
+          Queue.offerUnsafe(events, {
+            _tag: "RunSettled",
+            outcome: { _tag: "Completed", finalText: "first result" },
+          });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              onClose();
+              Queue.endUnsafe(events);
+            }),
+          );
+          return {
+            meta: Effect.succeed({
+              backend: "codex" as const,
+              modelLabel: "codex/noop-interrupt",
+            }),
+            events: Stream.fromQueue(events),
+            send: () => Effect.void,
+            // Models a backend drain gap with no active native turn. The
+            // optional event is offered immediately before interrupt resolves,
+            // matching the production backends' queue/pump ordering.
+            interrupt:
+              interruptPartialText === undefined
+                ? Effect.void
+                : Effect.sync(() => {
+                    Queue.offerUnsafe(events, {
+                      _tag: "RunSettled",
+                      outcome: {
+                        _tag: "Interrupted",
+                        partialText: interruptPartialText,
+                      },
+                    });
+                  }),
+          };
+        }),
+    };
+    return new Map<BackendName, SubagentBackend>([[backend.name, backend]]);
+  });
+  return ManagedRuntime.make(SubagentManagerLive.pipe(Layer.provide(registry)));
+}
 
 const parent: ParentContext = {
   parentCwd: process.cwd(),
@@ -100,6 +199,178 @@ test("stub subagent completes and delivers a final result", async () => {
     // The waitFor marked the settle as consumed.
     assert.deepEqual(settled, [{ id: snap.id, consumed: true }]);
   });
+});
+
+test("final settlement closes the backend scope exactly once", async () => {
+  let closeCount = 0;
+  const CleanupRegistryLive = Layer.sync(BackendRegistry, () => {
+    const backend = makeStubBackend({
+      backend: "codex",
+      defaultModelLabel: "codex/test",
+      contextWindow: 32_000,
+      toolName: "shell",
+      cadenceMs: 1,
+      onClose: () => closeCount++,
+    });
+    return new Map<BackendName, SubagentBackend>([[backend.name, backend]]);
+  });
+  const runtime = ManagedRuntime.make(
+    SubagentManagerLive.pipe(Layer.provide(CleanupRegistryLive)),
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(
+      runtime,
+      manager.spawn("codex", task("close this session")),
+    );
+    await runTool(runtime, manager.waitFor([snap.id]));
+    for (let attempt = 0; attempt < 100 && closeCount === 0; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    assert.equal(closeCount, 1);
+    assert.equal(manager.view.get(snap.id)?.status, "done");
+  } finally {
+    await runtime.dispose();
+  }
+  assert.equal(closeCount, 1);
+});
+
+test("terminal settlement ignores late buffered lifecycle events", async () => {
+  let closeCount = 0;
+  const runtime = createScriptedRuntime(
+    [
+      { _tag: "RunStarted" },
+      {
+        _tag: "RunSettled",
+        outcome: { _tag: "Completed", finalText: "first result" },
+      },
+      { _tag: "RunStarted" },
+      {
+        _tag: "RunSettled",
+        outcome: { _tag: "Failed", errorText: "late failure" },
+      },
+    ],
+    () => closeCount++,
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const settlements: string[] = [];
+    manager.view.setOnSettled((snap) => settlements.push(snap.finalText));
+    const snap = await runTool(
+      runtime,
+      manager.spawn("codex", task("scripted lifecycle")),
+    );
+    await runTool(runtime, manager.waitFor([snap.id]));
+
+    assert.equal(manager.view.get(snap.id)?.status, "done");
+    assert.equal(manager.view.get(snap.id)?.finalText, "first result");
+    assert.deepEqual(settlements, ["first result"]);
+  } finally {
+    await runtime.dispose();
+  }
+  assert.equal(closeCount, 1);
+});
+
+test("interruption is terminal even with a stale queued snapshot", async () => {
+  let closeCount = 0;
+  const runtime = createScriptedRuntime(
+    [
+      { _tag: "RunStarted" },
+      {
+        _tag: "QueueChanged",
+        queued: [{ text: "stale follow-up", kind: "follow-up" }],
+      },
+      { _tag: "RunSettled", outcome: { _tag: "Interrupted" } },
+    ],
+    () => closeCount++,
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(
+      runtime,
+      manager.spawn("codex", task("scripted interrupt")),
+    );
+    await runTool(runtime, manager.waitFor([snap.id]));
+
+    assert.equal(manager.view.get(snap.id)?.status, "error");
+    assert.equal(manager.view.get(snap.id)?.errorText, "Run was aborted");
+  } finally {
+    await runtime.dispose();
+  }
+  assert.equal(closeCount, 1);
+});
+
+test("cancel force-settles a drain gap when interrupt returns no event", async () => {
+  let closeCount = 0;
+  const runtime = createNoopInterruptRuntime(() => closeCount++);
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(
+      runtime,
+      manager.spawn("codex", task("drain-gap cancellation")),
+    );
+    for (
+      let attempt = 0;
+      attempt < 100 && manager.view.get(snap.id)?.finalText !== "first result";
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(manager.view.get(snap.id)?.status, "running");
+
+    await runTool(runtime, manager.cancel([snap.id]), {
+      signal: AbortSignal.timeout(1_000),
+      interruptMessage: "drain-gap cancellation timed out",
+    });
+    assert.equal(manager.view.get(snap.id)?.status, "error");
+    assert.equal(manager.view.get(snap.id)?.errorText, "Run was aborted");
+    assert.equal(manager.view.get(snap.id)?.finalText, "first result");
+  } finally {
+    await runtime.dispose();
+  }
+  assert.equal(closeCount, 1);
+});
+
+test("cancel preserves a backend's queued Interrupted partial text", async () => {
+  let closeCount = 0;
+  const runtime = createNoopInterruptRuntime(
+    () => closeCount++,
+    "partial work from child",
+  );
+
+  try {
+    const manager = await runtime.runPromise(SubagentManager);
+    const snap = await runTool(
+      runtime,
+      manager.spawn("codex", task("partial cancellation")),
+    );
+    for (
+      let attempt = 0;
+      attempt < 100 && manager.view.get(snap.id)?.finalText !== "first result";
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    await runTool(runtime, manager.cancel([snap.id]), {
+      signal: AbortSignal.timeout(1_000),
+      interruptMessage: "partial cancellation timed out",
+    });
+    assert.equal(manager.view.get(snap.id)?.status, "error");
+    assert.equal(manager.view.get(snap.id)?.errorText, "Run was aborted");
+    assert.equal(
+      manager.view.get(snap.id)?.finalText,
+      "partial work from child",
+    );
+  } finally {
+    await runtime.dispose();
+  }
+  assert.equal(closeCount, 1);
 });
 
 test("FAIL: prompts settle as errors; unconsumed settles are delivered", async () => {
@@ -228,49 +499,64 @@ test("pi spawn fails fast without the parent model registry", async () => {
   });
 });
 
-test("idle restarts respect the concurrency cap", async () => {
+test("settled subagents are closed and cannot restart", async () => {
   await withManager(async (manager, runtime) => {
-    // Settle one subagent, then fill all four slots with running ones.
     const settled = await runTool(
       runtime,
       manager.spawn("claude", task("early finisher")),
     );
     await runTool(runtime, manager.waitFor([settled.id]));
-    await runTool(
-      runtime,
-      Effect.forEach(
-        [1, 2, 3, 4],
-        (n) => manager.spawn("codex", task(`Task ${n}`)),
-        { concurrency: "unbounded" },
-      ),
-    );
-    // Restarting the settled one would be a fifth concurrent run.
+
+    assert.equal(manager.view.get(settled.id)?.status, "done");
     await assert.rejects(
       runTool(runtime, manager.send(settled.id, "go again")),
-      /Max 4 subagents/,
+      /finished and is closed/,
     );
-    assert.equal(manager.view.get(settled.id)?.status, "done");
+    // The terminal snapshot remains available for result collection/history.
+    assert.match(
+      manager.view.get(settled.id)?.finalText ?? "",
+      /early finisher/,
+    );
   });
 });
 
-test("send steers an idle subagent into another turn", async () => {
+test("queued sends remain accepted while continuations drain before auto-close", async () => {
   await withManager(async (manager, runtime) => {
     const snap = await runTool(
       runtime,
       manager.spawn("claude", task("First turn")),
     );
-    await runTool(runtime, manager.waitFor([snap.id]));
-    const afterFirst = manager.view.get(snap.id);
-    assert.equal(afterFirst?.status, "done");
-
-    await runTool(runtime, manager.send(snap.id, "Second turn"));
-    // The fresh run flips the status back to running...
-    while (manager.view.get(snap.id)?.status !== "running") {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    for (
+      let attempt = 0;
+      attempt < 100 && (manager.view.get(snap.id)?.turns ?? 0) === 0;
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
     }
+    await runTool(runtime, manager.send(snap.id, "Second turn"));
+
+    // The stub exposes a deliberate gap after the first RunSettled: the
+    // manager remains logically running because Second turn is queued, while
+    // the backend's current native turn is idle. A further send must queue,
+    // not be dropped as an implicit restart.
+    for (
+      let attempt = 0;
+      attempt < 200 &&
+      !manager.view.get(snap.id)?.finalText.includes("First turn");
+      attempt++
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(manager.view.get(snap.id)?.status, "running");
+    await runTool(runtime, manager.send(snap.id, "Third turn"));
     await runTool(runtime, manager.waitFor([snap.id]));
-    const afterSecond = manager.view.get(snap.id);
-    assert.equal(afterSecond?.status, "done");
-    assert.match(afterSecond?.finalText ?? "", /Second turn/);
+
+    const done = manager.view.get(snap.id);
+    assert.equal(done?.status, "done");
+    assert.match(done?.finalText ?? "", /Third turn/);
+    await assert.rejects(
+      runTool(runtime, manager.send(snap.id, "Fourth turn")),
+      /finished and is closed/,
+    );
   });
 });

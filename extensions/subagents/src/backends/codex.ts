@@ -353,6 +353,7 @@ const makeCodexSession = (
         modelLabel: task.model,
       } satisfies SubagentMeta as SubagentMeta,
       interruptTimer: undefined as ReturnType<typeof setTimeout> | undefined,
+      settleWaiters: new Set<() => void>(),
     };
     const pendingRequests = new Map<number, PendingRequest>();
     const tools = new Map<string, ToolState>();
@@ -423,6 +424,8 @@ const makeCodexSession = (
       state.interruptRequested = false;
       tools.clear();
       emit({ _tag: "RunSettled", outcome });
+      for (const waiter of state.settleWaiters) waiter();
+      state.settleWaiters.clear();
       queueMicrotask(startNextQueued);
     };
 
@@ -937,19 +940,32 @@ const makeCodexSession = (
           if (state.closed) {
             return new SendError({ message: "Subagent session is closed." });
           }
-          if (state.activeRun) {
-            state.pendingPrompts.push(text);
-            emit({ _tag: "QueueChanged", queued: queuedView() });
-            return Effect.void;
+          if (!state.activeRun && state.pendingPrompts.length === 0) {
+            return new SendError({
+              message: "Subagent run has already finished.",
+            });
           }
-          return Effect.sync(() => startRun(text));
+          state.pendingPrompts.push(text);
+          emit({ _tag: "QueueChanged", queued: queuedView() });
+          return Effect.void;
         }),
       interrupt: Effect.promise(async () => {
-        if (state.closed || !state.activeRun) return;
+        if (state.closed) return;
+        if (!state.activeRun) {
+          if (state.pendingPrompts.length === 0) return;
+          state.pendingPrompts = [];
+          emit({ _tag: "QueueChanged", queued: [] });
+          emit({ _tag: "RunSettled", outcome: { _tag: "Interrupted" } });
+          return;
+        }
+
         const serial = state.runSerial;
         state.pendingPrompts = [];
         emit({ _tag: "QueueChanged", queued: [] });
         state.interruptRequested = true;
+        const settled = new Promise<void>((resolve) => {
+          state.settleWaiters.add(resolve);
+        });
         sendInterrupt(serial);
         if (state.interruptTimer) clearTimeout(state.interruptTimer);
         state.interruptTimer = setTimeout(() => {
@@ -967,6 +983,7 @@ const makeCodexSession = (
             void terminateChild(child, () => state.exited);
           }
         }, INTERRUPT_FALLBACK_MS);
+        await settled;
       }),
     } satisfies SubagentSession;
   });

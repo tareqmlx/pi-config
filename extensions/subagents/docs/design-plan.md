@@ -8,6 +8,9 @@ unified behind a single Effect v4 service interface.
 > **Status:** this document describes the original v1 plan (stubbed backends). All
 > three backends are now REAL implementations — see `src/backends/{pi,claude,codex}.ts`.
 > The stub machinery survives in `src/backends/stub.ts` for the manager test registry.
+> Current lifecycle differs from the retained-session plan below: after the final queued
+> run settles, the manager closes the backend scope automatically and keeps only a bounded,
+> read-only terminal snapshot. The footer therefore reports active runs only.
 
 **Scope of the first version:** interface design + stubbed backend internals + the v1 UI
 carried over. No real Claude/Codex process integration yet; the pi backend may also stay

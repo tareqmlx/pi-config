@@ -8,7 +8,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ## What's included
 
-15 extensions registering 16 model-facing tools and 12 slash commands, 2 skills, and 4 themes.
+14 extensions registering 13 model-facing tools and 12 slash commands, 2 skills, and 4 themes.
 
 ### Extensions
 
@@ -18,7 +18,6 @@ Pi loads everything here at startup from its own directory. There is no build st
 | `workflows`              | `workflow`                                                                              | `/workflows`         | Model-authored multi-agent orchestration. The model writes a JavaScript script inline that runs ordered phases and fans work out to isolated subagents via `agent()` / `parallel()`. Runs blocking by default, or `background: true`. It saves artifacts under `~/.pi/agent/workflows/<runId>/`.                                                                                                                                  |
 | `background-terminals`   | `bg_start`, `bg_status`, `bg_list`, `bg_kill`                                           | `/ps`                | Long-running shell processes the model can inspect and stop but never write to (stdin is ignored at the OS level). Max 8 concurrent; one exit notification per process. A widget above the editor shows the running count.                                                                                                                                                                                                        |
 | `file-search`            | `fd`, `rg`                                                                              | —                    | First-class file-find and grep tools. Prefers a system-installed `fd`/`rg` (or `fdfind` on Debian/Ubuntu), then a binary already in `bin/`, and only downloads an official release into `bin/` when neither exists.                                                                                                                                                                                                               |
-| `firecrawl-search`       | `search`, `scrape`, `crawl`                                                             | —                    | Web search, page scrape, and site crawl via [Firecrawl](https://firecrawl.dev). Requires an API key.                                                                                                                                                                                                                                                                                                                              |
 | `ask-user`               | `ask_user`                                                                              | —                    | Lets the model ask a single multiple-choice question (2–5 options plus "Write my own answer") in a popup. Esc declines and tells the model so.                                                                                                                                                                                                                                                                                    |
 | `add-dir`                | —                                                                                       | `/add-dir`           | Adds another working directory to the current session without changing its primary working directory. Validates and canonicalizes the path, completes directory names, and teaches the agent to use absolute paths there. The directory survives reloads and forks in the current process, but not new or resumed sessions.                                                                                                       |
 | `multi-account`          | —                                                                                       | `/account`           | Registers named ZAI and OpenAI Codex accounts as independent provider IDs, such as `zai:personal` and `openai-codex:work`. Each provider ID has its own credential in Pi while reusing the built-in provider's models, authentication, and streaming behavior.                                                                                                                                    |
@@ -49,7 +48,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 Requires Pi 0.84 or newer, Node.js 22.6 or newer (the test script uses `--experimental-strip-types`), and git.
 
-Clone this repository to `~/.pi/agent`, then install dependencies at the root **and** in each of the ten extension packages:
+Clone this repository to `~/.pi/agent`, then install dependencies at the root **and** in each of the nine extension packages:
 
 ```sh
 cd ~/.pi/agent
@@ -58,7 +57,6 @@ npm install --prefix extensions/ask-user
 npm install --prefix extensions/background-terminals
 npm install --prefix extensions/copy-all
 npm install --prefix extensions/file-search
-npm install --prefix extensions/firecrawl-search
 npm install --prefix extensions/git-info
 npm install --prefix extensions/model-info
 npm install --prefix extensions/subagents
@@ -66,7 +64,7 @@ npm install --prefix extensions/summaries
 npm install --prefix extensions/ui-customization
 ```
 
-> The root `package.json` does not declare npm workspaces, so a single root `npm install` will **not** reach the nested extension packages. Seven of them pull runtime dependencies (`effect`, and `firecrawl` / `@anthropic-ai/claude-agent-sdk` / `@effect/platform-node` where relevant); all ten run an `effect-tsgo patch` prepare step and need their own install for `npm run check` to work.
+> The root `package.json` does not declare npm workspaces, so a single root `npm install` will **not** reach the nested extension packages. Six of them pull runtime dependencies (`effect`, `@anthropic-ai/claude-agent-sdk`, and `@effect/platform-node` where relevant); all nine run an `effect-tsgo patch` prepare step and need their own install for `npm run check` to work.
 
 Then enable automatic light/dark theming in `~/.pi/agent/settings.json`, keeping your existing settings:
 
@@ -78,7 +76,7 @@ Then enable automatic light/dark theming in `~/.pi/agent/settings.json`, keeping
 
 The value is `light-theme/dark-theme`. Pi queries the terminal at startup and follows terminal color-scheme change notifications while it is running.
 
-See [SETUP.md](SETUP.md) for the Firecrawl API key and `fd`/`rg` binary details.
+See [SETUP.md](SETUP.md) for `fd`/`rg` binary details.
 
 ## Configuration
 
@@ -91,7 +89,6 @@ Settings live in `~/.pi/agent/settings.json` (gitignored):
 
 Other configuration:
 
-- `.env`: `FIRECRAWL_API_KEY`. Copy from `.env.example`.
 - `multi-account.json`: named ZAI and Codex account providers. Written by `/account` and gitignored. It contains account names, not credentials.
 - `extensions/summaries/config.private.json`: recap model, provider, and reasoning level. Written by `/summary-model`, gitignored. Defaults to `openai-codex` / `gpt-5.6-luna` / `medium`.
 
@@ -168,7 +165,7 @@ npm run format:check  # prettier --check
 npm test              # node --test on extensions/*/*.test.ts, then file-search's vitest suite
 ```
 
-The ten extension packages each have their own `npm run check` scoped to a local `tsconfig.json`, and several have their own `test` script. `workflows` and `shared` have no package of their own and are type-checked only by the root `check`. The root `test` script matches `extensions/*/*.test.ts` (one level deep) plus `file-search` explicitly, so per-extension suites are worth running directly when working inside one.
+The nine extension packages each have their own `npm run check` scoped to a local `tsconfig.json`, and several have their own `test` script. `workflows` and `shared` have no package of their own and are type-checked only by the root `check`. The root `test` script matches `extensions/*/*.test.ts` (one level deep) plus `file-search` explicitly, so per-extension suites are worth running directly when working inside one.
 
 `extensions/subagents/test:live` runs the tests that talk to real Claude Code and Codex processes; it is excluded from the default run.
 

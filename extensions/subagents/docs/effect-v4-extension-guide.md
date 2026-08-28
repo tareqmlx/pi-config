@@ -9,8 +9,8 @@
 > `@effect/tsgo@0.19.0`, `typescript@7.0.2` (checked 2026-07-13, in `extensions/subagents`).
 > `npm run check` there passes clean — use it as the reference implementation.
 >
-> Audience: the agents migrating `firecrawl-search`, `ask-user`, `model-info`,
-> `git-info`, `ui-customization`, and `copy-all`.
+> Audience: the agents migrating `ask-user`, `model-info`, `git-info`,
+> `ui-customization`, and `copy-all`.
 
 ---
 
@@ -25,8 +25,8 @@ Reach for Effect only where you actually get something from it:
 
 - **Yes:** async work that needs typed errors, cancellation via the tool `AbortSignal`,
   timeouts, retries/polling, or a resource whose lifetime must outlive one call
-  (child process, subscription) → child processes (`git-info`, `copy-all`), the
-  Firecrawl SDK calls (`firecrawl-search`), git/gh polling (`git-info`).
+  (child process, subscription) → child processes (`git-info`, `copy-all`) and
+  git/gh polling (`git-info`).
 - **No / barely:** pure TUI popups and rendering (`ask-user`, `ui-customization`),
   cross-extension channel plumbing, cost/token bookkeeping (`model-info`). These are
   synchronous or already-Promise UI code; wrapping them in Effect adds ceremony and no
@@ -170,7 +170,7 @@ Key facts:
 
 - `runPromiseExit(effect, { signal })` — passing the tool's `AbortSignal` makes cancelling
   the tool interrupt the fiber; scoped resources (child processes) are torn down.
-- `runtime.runFork(effect)` for fire-and-forget background work (polling loops, §5).
+- `runtime.runFork(effect)` for fire-and-forget background work (polling loops, §4).
 - `dispose()` is the single teardown hook — put resource cleanup in Effect finalizers, not
   in ad-hoc `session_shutdown` code.
 - If an extension has **no** services (pure `Effect.tryPromise` calls, no fs/process), you
@@ -223,34 +223,7 @@ the child-process / concurrency APIs live in `effect-v4-notes.md` — don't re-d
 
 ---
 
-## 4. Recipe: wrapping a Promise SDK (firecrawl-search)
-
-The Firecrawl client is Promise-based. Wrap each call in `Effect.tryPromise` with a typed
-error; the callback receives an `AbortSignal` tied to fiber interruption — forward it to any
-SDK that accepts one so tool cancellation propagates.
-
-```ts
-import { Data, Effect } from "effect";
-
-class FirecrawlError extends Data.TaggedError("FirecrawlError")<{
-  readonly cause: unknown;
-}> {}
-
-const search = (client: Firecrawl, query: string) =>
-  Effect.tryPromise({
-    try: (signal) => client.search(query, {/* …, signal? if supported */}),
-    catch: (cause) => new FirecrawlError({ cause }),
-  });
-```
-
-There's no `Layer` here unless you want the client as a service. For a single tool this is
-fine to call directly through `runTool` (or even plain `Effect.runPromiseExit`, §2). Keep the
-existing `.env`/API-key reading and result truncation as plain TS — no reason to Effect-ify
-string trimming.
-
----
-
-## 5. Recipe: child processes + timeout + polling (git-info, copy-all)
+## 4. Recipe: child processes + timeout + polling (git-info, copy-all)
 
 `git-info` shells out to `git`/`gh` with per-command timeouts and polls on an interval;
 `copy-all` pipes text into `pbcopy`. Two viable levels — pick the lightest that fits.
@@ -297,7 +270,7 @@ Migrate it only for consistency; if you do, `Effect.callback` around `child.once
 
 ---
 
-## 6. Recipe: UI popups & rendering (ask-user, ui-customization, model-info)
+## 5. Recipe: UI popups & rendering (ask-user, ui-customization, model-info)
 
 These are the "leave it mostly plain" cases.
 
@@ -307,7 +280,7 @@ These are the "leave it mostly plain" cases.
 - `ui-customization` and `model-info` are renderers / event bookkeepers driven by
   `pi.on(...)` and cross-extension channels (`shared/dashboard-state.ts`). Channels are a
   pi-native mechanism — keep them. State counting and formatting stay synchronous TS.
-- If `model-info` has a periodic "live update" tick, the §5 polling pattern applies; but a
+- If `model-info` has a periodic "live update" tick, the §4 polling pattern applies; but a
   plain timer here is also acceptable since there's no resource to tear down.
 
 The migration bar for these: adopt the toolchain (§1) so they typecheck under TS7 + the
@@ -315,7 +288,7 @@ Effect LS, and only touch runtime code that has a real async/resource concern.
 
 ---
 
-## 7. Verify — scoped to the one extension
+## 6. Verify — scoped to the one extension
 
 Run everything from inside the extension directory so you never trigger a root/global build
 or format:
@@ -334,7 +307,7 @@ the pinned versions. If a migrated extension fails `check` with `Effect.fork`/`S
 
 ---
 
-## 8. Don'ts (keep it lean)
+## 7. Don'ts (keep it lean)
 
 1. **Don't float versions.** Pin `effect` and `@effect/platform-node` to the exact same
    `4.0.0-beta.98`; `unstable/*` can break between betas.

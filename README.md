@@ -26,7 +26,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 | `model-info`             | —                                                                                       | —                    | Tracks live model, token, and session-cost state and publishes it on a shared channel for the footer.                                                                                                                                                                                                                                                                                                                             |
 | `ui-customization`       | —                                                                                       | —                    | Custom editor and footer, rendering the git and model state that `git-info` and `model-info` publish. Clipboard images appear as `[Image #N]` labels while Pi sends real image attachments and retains model-only local paths. Prompt history persists across `/clear`, session switches, reloads, and restarts.                                                                                                                  |
 | `copy-all`               | —                                                                                       | `/copy-all`          | Copies every user and assistant message in the thread to the clipboard.                                                                                                                                                                                                                                                                                                                                                           |
-| `clear`                  | —                                                                                       | `/clear`             | Clears the terminal and starts a new session.                                                                                                                                                                                                                                                                                                                                                                                     |
+| `clear`                  | —                                                                                       | `/clear`             | Clears the terminal and starts a new session while preserving the active model and reasoning level.                                                                                                                                                                                                                                                                                                                               |
 
 `extensions/shared/` holds code used across extensions: the dashboard state channels, child-session plumbing, context-utilization math, activity status, and tool-call timeouts.
 
@@ -45,7 +45,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ## Install
 
-Requires Pi, Node.js 22.6 or newer (the test script uses `--experimental-strip-types`), and git.
+Requires Pi 0.84 or newer, Node.js 22.6 or newer (the test script uses `--experimental-strip-types`), and git.
 
 Clone this repository to `~/.pi/agent`, then install dependencies at the root **and** in each of the ten extension packages:
 

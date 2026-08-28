@@ -8,7 +8,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ## What's included
 
-14 extensions registering 16 model-facing tools and 11 slash commands, 2 skills, and 4 themes.
+15 extensions registering 16 model-facing tools and 12 slash commands, 2 skills, and 4 themes.
 
 ### Extensions
 
@@ -21,6 +21,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 | `firecrawl-search`       | `search`, `scrape`, `crawl`                                                             | —                    | Web search, page scrape, and site crawl via [Firecrawl](https://firecrawl.dev). Requires an API key.                                                                                                                                                                                                                                                                                                                              |
 | `ask-user`               | `ask_user`                                                                              | —                    | Lets the model ask a single multiple-choice question (2–5 options plus "Write my own answer") in a popup. Esc declines and tells the model so.                                                                                                                                                                                                                                                                                    |
 | `add-dir`                | —                                                                                       | `/add-dir`           | Adds another working directory to the current session without changing its primary working directory. Validates and canonicalizes the path, completes directory names, and teaches the agent to use absolute paths there. The directory survives reloads and forks in the current process, but not new or resumed sessions.                                                                                                       |
+| `multi-account`          | —                                                                                       | `/account`           | Registers named ZAI and OpenAI Codex accounts as independent provider IDs, such as `zai:personal` and `openai-codex:work`. Each provider ID has its own credential in Pi while reusing the built-in provider's models, authentication, and streaming behavior.                                                                                                                                    |
 | `git-info`               | —                                                                                       | `/lg`, `/pr`         | Polls git status and `gh` pull-request state in the background to feed the footer. `/lg` browses changed files and their diffs; `/pr` forces a refresh.                                                                                                                                                                                                                                                                           |
 | `summaries`              | —                                                                                       | `/summary-model`     | Generates a recap of each agent run with a cheap secondary model and renders it as a custom transcript entry. `/summary-model` picks the provider, model, and reasoning level.                                                                                                                                                                                                                                                    |
 | `model-info`             | —                                                                                       | —                    | Tracks live model, token, and session-cost state and publishes it on a shared channel for the footer.                                                                                                                                                                                                                                                                                                                             |
@@ -91,7 +92,72 @@ Settings live in `~/.pi/agent/settings.json` (gitignored):
 Other configuration:
 
 - `.env`: `FIRECRAWL_API_KEY`. Copy from `.env.example`.
+- `multi-account.json`: named ZAI and Codex account providers. Written by `/account` and gitignored. It contains account names, not credentials.
 - `extensions/summaries/config.private.json`: recap model, provider, and reasoning level. Written by `/summary-model`, gitignored. Defaults to `openai-codex` / `gpt-5.6-luna` / `medium`.
+
+## Multiple accounts
+
+Pi normally stores one credential for each provider ID. A second login to the same provider replaces its first credential. The `multi-account` extension avoids that conflict by registering one provider ID for each named account. For example, `zai:personal` and `zai:work` connect to the same ZAI service but keep separate credentials.
+
+The extension supports these built-in providers:
+
+- `zai` for ZAI Coding Plan API keys.
+- `openai-codex` for ChatGPT Plus/Pro Codex OAuth.
+
+The original `zai` and `openai-codex` providers remain available. Named accounts are additional providers.
+
+### Add ZAI accounts
+
+Add each account with a short profile name:
+
+```text
+/account add zai personal
+/account add zai work
+```
+
+Authenticate each provider ID with its own API key:
+
+```text
+/login zai:personal
+/login zai:work
+```
+
+Open `/model` and select a model under the account that you want to use, for example:
+
+```text
+zai:personal/glm-5.3
+zai:work/glm-5.3
+```
+
+### Add Codex accounts
+
+Create one provider ID for each ChatGPT account:
+
+```text
+/account add openai-codex personal
+/account add openai-codex work
+```
+
+Run the OAuth login for each account:
+
+```text
+/login openai-codex:personal
+/login openai-codex:work
+```
+
+Complete each browser login with the intended ChatGPT Plus/Pro account. Then use `/model` to select a Codex model under `openai-codex:personal` or `openai-codex:work`.
+
+### List or remove accounts
+
+```text
+/account list
+/account remove zai work
+/account remove openai-codex work
+```
+
+Before removal, switch away from the provider with `/model`. To delete its saved credential too, run `/logout`, select the named provider, and then run `/account remove`. Removing an account provider does not delete its credential automatically.
+
+The extension writes only provider and profile names to `~/.pi/agent/multi-account.json` (or the directory selected by `PI_CODING_AGENT_DIR`). Pi continues to store API keys and OAuth tokens in `auth.json`. The extension does not rotate accounts or fail over between them automatically; account selection is explicit through `/model`.
 
 ## Development
 

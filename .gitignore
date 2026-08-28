@@ -13,6 +13,8 @@ trust.json
 models.json
 models-store.json
 input-history.jsonl
+multi-account.json
+multi-account.json.*.tmp
 extensions/summaries/config.private.json
 extensions/summaries/config.private.json.*.tmp
 

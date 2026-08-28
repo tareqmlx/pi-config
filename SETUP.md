@@ -29,7 +29,7 @@ Configure Pi to follow the terminal's light/dark appearance in `~/.pi/agent/sett
 
 ```json
 {
-  "theme": "kaku-light/catppuccin-macchiato-peach"
+  "theme": "kaku-light/catppuccin-macchiato"
 }
 ```
 

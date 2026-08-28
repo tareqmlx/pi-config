@@ -43,7 +43,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ### Themes
 
-`kaku-light`, `github-dark-default`, `github-light-default`, `catppuccin-macchiato-peach`.
+`kaku-light`, `github-dark-default`, `github-light-default`, `catppuccin-macchiato`.
 
 ## Install
 
@@ -72,7 +72,7 @@ Then enable automatic light/dark theming in `~/.pi/agent/settings.json`, keeping
 
 ```json
 {
-  "theme": "kaku-light/catppuccin-macchiato-peach"
+  "theme": "kaku-light/catppuccin-macchiato"
 }
 ```
 

@@ -8,7 +8,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ## What's included
 
-14 extensions registering 16 model-facing tools and 10 slash commands, 2 skills, and 3 themes.
+13 extensions registering 16 model-facing tools and 10 slash commands, 2 skills, and 4 themes.
 
 ### Extensions
 
@@ -25,7 +25,6 @@ Pi loads everything here at startup from its own directory. There is no build st
 | `summaries`              | —                                                                                       | `/summary-model`     | Generates a recap of each agent run with a cheap secondary model and renders it as a custom transcript entry. `/summary-model` picks the provider, model, and reasoning level.                                                                                                                                                                                                                                                    |
 | `model-info`             | —                                                                                       | —                    | Tracks live model, token, and session-cost state and publishes it on a shared channel for the footer.                                                                                                                                                                                                                                                                                                                             |
 | `ui-customization`       | —                                                                                       | —                    | Custom editor and footer, rendering the git and model state that `git-info` and `model-info` publish. Clipboard images appear as `[Image #N]` labels while Pi sends real image attachments and retains model-only local paths. Prompt history persists across `/clear`, session switches, reloads, and restarts.                                                                                                                  |
-| `startup-terminal-theme` | —                                                                                       | —                    | Queries the terminal background color at startup and picks a light or dark theme to match.                                                                                                                                                                                                                                                                                                                                        |
 | `copy-all`               | —                                                                                       | `/copy-all`          | Copies every user and assistant message in the thread to the clipboard.                                                                                                                                                                                                                                                                                                                                                           |
 | `clear`                  | —                                                                                       | `/clear`             | Clears the terminal and starts a new session.                                                                                                                                                                                                                                                                                                                                                                                     |
 
@@ -42,7 +41,7 @@ Pi loads everything here at startup from its own directory. There is no build st
 
 ### Themes
 
-`github-dark-default`, `github-light-default`, `catppuccin-macchiato-peach`.
+`kaku-light`, `github-dark-default`, `github-light-default`, `catppuccin-macchiato-peach`.
 
 ## Install
 
@@ -67,13 +66,15 @@ npm install --prefix extensions/ui-customization
 
 > The root `package.json` does not declare npm workspaces, so a single root `npm install` will **not** reach the nested extension packages. Seven of them pull runtime dependencies (`effect`, and `firecrawl` / `@anthropic-ai/claude-agent-sdk` / `@effect/platform-node` where relevant); all ten run an `effect-tsgo patch` prepare step and need their own install for `npm run check` to work.
 
-Then enable a theme in `~/.pi/agent/settings.json`, keeping your existing settings:
+Then enable automatic light/dark theming in `~/.pi/agent/settings.json`, keeping your existing settings:
 
 ```json
 {
-  "theme": "github-dark-default"
+  "theme": "kaku-light/catppuccin-macchiato-peach"
 }
 ```
+
+The value is `light-theme/dark-theme`. Pi queries the terminal at startup and follows terminal color-scheme change notifications while it is running.
 
 See [SETUP.md](SETUP.md) for the Firecrawl API key and `fd`/`rg` binary details.
 
@@ -81,11 +82,10 @@ See [SETUP.md](SETUP.md) for the Firecrawl API key and `fd`/`rg` binary details.
 
 Settings live in `~/.pi/agent/settings.json` (gitignored):
 
-| Key                                          | Effect                                                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `theme`                                      | Active theme name.                                                                                                             |
-| `startupThemes.dark` / `startupThemes.light` | Themes the `startup-terminal-theme` extension picks between. Startup detection stays off until both are set.                   |
-| `enableClaudeSubagent`                       | Set `false` to hide the `claude` backend from `subagent_spawn`. Defaults to `true`; malformed values fall back to the default. |
+| Key                    | Effect                                                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme`                | A fixed theme name, or `light-theme/dark-theme` to follow the terminal background at startup and while Pi is running.                           |
+| `enableClaudeSubagent` | Set `false` to hide the `claude` backend from `subagent_spawn`. Defaults to `true`; malformed values fall back to the default.                  |
 
 Other configuration:
 
@@ -101,7 +101,7 @@ npm run format:check  # prettier --check
 npm test              # node --test on extensions/*/*.test.ts, then file-search's vitest suite
 ```
 
-The ten extension packages each have their own `npm run check` scoped to a local `tsconfig.json`, and several have their own `test` script. `workflows`, `startup-terminal-theme`, and `shared` have no package of their own and are type-checked only by the root `check`. The root `test` script matches `extensions/*/*.test.ts` (one level deep) plus `file-search` explicitly, so per-extension suites are worth running directly when working inside one.
+The ten extension packages each have their own `npm run check` scoped to a local `tsconfig.json`, and several have their own `test` script. `workflows` and `shared` have no package of their own and are type-checked only by the root `check`. The root `test` script matches `extensions/*/*.test.ts` (one level deep) plus `file-search` explicitly, so per-extension suites are worth running directly when working inside one.
 
 `extensions/subagents/test:live` runs the tests that talk to real Claude Code and Codex processes; it is excluded from the default run.
 

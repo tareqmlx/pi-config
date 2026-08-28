@@ -25,12 +25,12 @@ The `file-search` extension registers `fd` and `rg` as model tools. No setup is 
 
 ## Theme
 
-Add the included theme to `~/.pi/agent/settings.json` while keeping your existing settings:
+Configure Pi to follow the terminal's light/dark appearance in `~/.pi/agent/settings.json` while keeping your existing settings:
 
 ```json
 {
-  "theme": "github-dark-default"
+  "theme": "kaku-light/catppuccin-macchiato-peach"
 }
 ```
 
-Pi will load the extensions, skills, and theme from their directories the next time it starts.
+The value is `light-theme/dark-theme`. Pi loads the themes on its next start, queries the terminal background, and follows color-scheme changes while it is running.
